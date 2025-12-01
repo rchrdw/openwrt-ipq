@@ -1,0 +1,157 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+        required: true
+        default: 'main-nss'
+        type: choice
+        options:
+          - main-nss
+          - 24.10-nss
+  # push:
+  #   branches:
+  #     - main-nss
+  #     - 24.10-nss
+  # pull_request:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      UPSTREAM_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          repository: 'qosmio/openwrt-ipq'
+          ref: ${{ env.UPSTREAM_BRANCH }}
+
+      - name: Remove files to free disk space
+        run: |
+          df -h
+          rm -rf /opt/hostedtoolcache
+          df -h
+          rm -rf /usr/share/dotnet || true
+          df -h
+          rm -rf /usr/local/lib/android || true
+          df -h
+
+      # Install build dependencies
+      - name: Install dependencies
+        run: |
+          sudo apt update && \
+          sudo apt install -y build-essential \
+          clang \
+          flex \
+          bison \
+          g++ \
+          gawk \
+          gcc-multilib \
+          g++-multilib \
+          gettext \
+          git \
+          libncurses5-dev \
+          libssl-dev \
+          python3-setuptools \
+          rsync \
+          swig \
+          unzip \
+          zlib1g-dev \
+          file \
+          wget && \
+          sudo apt-get clean
+
+
+      - name: Get short SHA
+        id: sha
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Update feeds
+        run: |
+          ./scripts/feeds update
+          ./scripts/feeds install -a
+
+      - name: Prepare config
+        run: |
+          cp nss-setup/config-nss.seed .config
+          sed -i 's/# CONFIG_TARGET_qualcommax_ipq807x_DEVICE_linksys_mx4300 is not set/CONFIG_TARGET_qualcommax_ipq807x_DEVICE_linksys_mx4300=y/' .config
+          echo 'CONFIG_PACKAGE_adguardhome=y' >> .config
+          echo 'CONFIG_PACKAGE_hostapd=y' >> .config
+
+      - name: Make config
+        run: make defconfig V=s
+
+      - name: Upload .config
+        uses: actions/upload-artifact@v4
+        with:
+          name: dot-config
+          path: .config
+          include-hidden-files: true
+
+      - name: download dependendies
+        run: make download -j$(nproc) V=s
+
+      - name: Build
+        run:  make -j$(nproc) V=s
+
+      - name: Upload config.buildinfo
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-buildinfo
+          path: ./bin/targets/qualcommax/ipq807x/config.buildinfo
+
+      - name: Get current date time
+        run: echo "RELEASE_DATE=$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_ENV
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ env.UPSTREAM_BRANCH }}-${{ env.RELEASE_DATE }}-${{ steps.sha.outputs.sha }}
+          release_name: Release ${{ env.UPSTREAM_BRANCH }}-${{ steps.sha.outputs.sha }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset (sysupgrade)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/targets/qualcommax/ipq807x/openwrt-qualcommax-ipq807x-linksys_mx4300-squashfs-sysupgrade.bin
+          asset_name: openwrt-qualcommax-ipq807x-linksys_mx4300-squashfs-sysupgrade.bin
+          asset_content_type: application/octet-stream
+
+      - name: Upload Release Asset (factory)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/targets/qualcommax/ipq807x/openwrt-qualcommax-ipq807x-linksys_mx4300-squashfs-factory.bin
+          asset_name: openwrt-qualcommax-ipq807x-linksys_mx4300-squashfs-factory.bin
+          asset_content_type: application/octet-stream
+
+      - name: Upload Release Asset (initramfs)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/targets/qualcommax/ipq807x/openwrt-qualcommax-ipq807x-linksys_mx4300-initramfs-uImage.itb
+          asset_name: openwrt-qualcommax-ipq807x-linksys_mx4300-initramfs-uImage.itb
+          asset_content_type: application/octet-stream
+
+      - name: Upload Release Asset (buildinfo)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/targets/qualcommax/ipq807x/config.buildinfo
+          asset_name: config.buildinfo
+          asset_content_type: text/plain
+
+      - name: Upload Release Asset (device manifest)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/targets/qualcommax/ipq807x/openwrt-qualcommax-ipq807x-linksys_mx4300.manifest
+          asset_name: openwrt-qualcommax-ipq807x-linksys_mx4300.manifest
+          asset_content_type: text/plain

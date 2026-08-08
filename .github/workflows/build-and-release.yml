@@ -20,6 +20,8 @@ on:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UPSTREAM_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
@@ -81,7 +83,6 @@ jobs:
           sed -i 's/# CONFIG_TARGET_qualcommax_ipq807x_DEVICE_linksys_mx4300 is not set/CONFIG_TARGET_qualcommax_ipq807x_DEVICE_linksys_mx4300=y/' .config
           echo 'CONFIG_PACKAGE_adguardhome=y' >> .config
           echo 'CONFIG_PACKAGE_luci-app-ddns=y' >> .config
-          echo 'CONFIG_PACKAGE_ddns-scripts=y' >> .config
 
 
       # echo 'CONFIG_PACKAGE_hostapd=y' >> .config
